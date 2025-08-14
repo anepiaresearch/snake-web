@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Snake – Web</title>
+<style>
+  html,body{height:100%;margin:0;background:#0f172a;color:#e2e8f0;font-family:system-ui,Segoe UI,Roboto,Ubuntu}
+  .wrap{max-width:720px;margin:0 auto;padding:16px;display:flex;flex-direction:column;gap:12px}
+  .top{display:flex;justify-content:space-between;align-items:center}
+  canvas{background:#0b1220;border:2px solid #334155;border-radius:12px;touch-action:none}
+  .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  button{padding:8px 12px;border-radius:10px;border:1px solid #334155;background:#111827;color:#e5e7eb;cursor:pointer}
+  button:hover{background:#1f2937}
+  .pill{padding:6px 10px;border-radius:999px;background:#111827;border:1px solid #374151}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <h1 style="margin:0;font-size:20px;">🐍 Snake</h1>
+    <div class="row">
+      <div class="pill">Puntaje: <span id="score">0</span></div>
+      <div class="pill">Récord: <span id="best">0</span></div>
+    </div>
+  </div>
+  <canvas id="game" width="480" height="480"></canvas>
+  <div class="row">
+    <button id="btn-start">▶️ Iniciar / Reiniciar</button>
+    <button id="btn-slower">⏬ Más lento</button>
+    <button id="btn-faster">⏫ Más rápido</button>
+  </div>
+  <p style="margin:0 0 8px 0;opacity:.85">
+    Controles: <b>WASD</b> / <b>Flechas</b> • En móvil: deslizá en el lienzo
+  </p>
+</div>
+
+<script>
+(() => {
+  const C = document.getElementById('game');
+  const ctx = C.getContext('2d');
+  const W = 16, H = 16, CELL = C.width / W;
+  const COLORS = { bg: '#0b1220', grid: '#111827', snake: '#22c55e', head: '#86efac', food: '#fb7185' };
+
+  const $score = document.getElementById('score');
+  const $best = document.getElementById('best');
+  const $start = document.getElementById('btn-start');
+  const $slower = document.getElementById('btn-slower');
+  const $faster = document.getElementById('btn-faster');
+
+  let best = Number(localStorage.getItem('snake_best')||0);
+  $best.textContent = best;
+
+  let state, timer=null, speed=120, pendingDir=null;
+
+  function newGame(){
+    const mid = {x: Math.floor(W/2), y: Math.floor(H/2)};
+    state = {
+      snake: [mid, {x: mid.x-1,y: mid.y}],
+      dir: 'R',
+      food: spawnFood([{x: mid.x, y: mid.y}, {x: mid.x-1,y: mid.y}]),
+      score: 0,
+      dead: false
+    };
+    $score.textContent = 0;
+    pendingDir = null;
+    draw();
+  }
+
+  function spawnFood(snake){
+    const used = new Set(snake.map(p=>`${p.x},${p.y}`));
+    const free = [];
+    for(let y=0;y<H;y++)for(let x=0;x<W;x++){
+      const k = `${x},${y}`;
+      if(!used.has(k)) free.push({x,y});
+    }
+    return free[Math.floor(Math.random()*free.length)];
+  }
+
+  function step(){
+    if(state.dead) return;
+    if(pendingDir && !isOpposite(pendingDir, state.dir)) state.dir = pendingDir;
+    pendingDir = null;
+
+    const head = state.snake[0];
+    const delta = {U:[0,-1], D:[0,1], L:[-1,0], R:[1,0]}[state.dir];
+    const nx = head.x + delta[0], ny = head.y + delta[1];
+    // choque
+    if(nx<0||ny<0||nx>=W||ny>=H || state.snake.some(p=>p.x===nx && p.y===ny)){
+      state.dead = true;
+      stopLoop();
+      draw();
+      return;
+    }
+    state.snake.unshift({x:nx,y:ny});
+    if(nx===state.food.x && ny===state.food.y){
+      state.score++;
+      $score.textContent = state.score;
+      if(state.score>best){ best=state.score; localStorage.setItem('snake_best', best); $best.textContent = best; }
+      state.food = spawnFood(state.snake);
+    } else {
+      state.snake.pop();
+    }
+    draw();
+  }
+
+  function draw(){
+    ctx.fillStyle = COLORS.bg; ctx.fillRect(0,0,C.width,C.height);
+    // grid
+    ctx.strokeStyle = COLORS.grid; ctx.lineWidth = 1;
+    for(let i=1;i<W;i++){ ctx.beginPath(); ctx.moveTo(i*CELL,0); ctx.lineTo(i*CELL,C.height); ctx.stroke(); }
+    for(let j=1;j<H;j++){ ctx.beginPath(); ctx.moveTo(0,j*CELL); ctx.lineTo(C.width,j*CELL); ctx.stroke(); }
+    // food
+    drawCell(state.food.x, state.food.y, COLORS.food);
+    // snake
+    state.snake.forEach((p,i)=>drawCell(p.x,p.y, i===0?COLORS.head:COLORS.snake));
+    if(state.dead){
+      ctx.fillStyle = 'rgba(0,0,0,.5)'; ctx.fillRect(0,0,C.width,C.height);
+      ctx.fillStyle = '#e2e8f0'; ctx.textAlign='center';
+      ctx.font = 'bold 28px system-ui';
+      ctx.fillText('💀 GAME OVER', C.width/2, C.height/2);
+    }
+  }
+  function drawCell(x,y,color){
+    const m = 2;
+    ctx.fillStyle = color;
+    ctx.fillRect(x*CELL+m, y*CELL+m, CELL-2*m, CELL-2*m);
+  }
+  function isOpposite(a,b){
+    return (a==='U'&&b==='D')||(a==='D'&&b==='U')||(a==='L'&&b==='R')||(a==='R'&&b==='L');
+  }
+  function setDir(d){ if(!isOpposite(d,state.dir)) pendingDir = d; }
+
+  // loop
+  function startLoop(){ stopLoop(); timer = setInterval(step, speed); }
+  function stopLoop(){ if(timer){ clearInterval(timer); timer=null; } }
+
+  // controls: teclado
+  addEventListener('keydown', (e)=>{
+    const k = e.key.toLowerCase();
+    if(k==='arrowup'||k==='w') setDir('U');
+    else if(k==='arrowdown'||k==='s') setDir('D');
+    else if(k==='arrowleft'||k==='a') setDir('L');
+    else if(k==='arrowright'||k==='d') setDir('R');
+  });
+
+  // controles: gestos
+  let sx=0, sy=0;
+  C.addEventListener('touchstart', (e)=>{ const t=e.changedTouches[0]; sx=t.clientX; sy=t.clientY; }, {passive:true});
+  C.addEventListener('touchend', (e)=>{
+    const t=e.changedTouches[0]; const dx=t.clientX-sx, dy=t.clientY-sy;
+    if(Math.abs(dx)>Math.abs(dy)) setDir(dx>0?'R':'L'); else setDir(dy>0?'D':'U');
+  }, {passive:true});
+
+  $start.onclick = ()=>{ newGame(); startLoop(); };
+  $slower.onclick = ()=>{ speed = Math.min(300, speed+20); if(timer) startLoop(); };
+  $faster.onclick = ()=>{ speed = Math.max(40, speed-20); if(timer) startLoop(); };
+
+  // init
+  newGame();
+})();
+</script>
+</body>
+</html>
