@@ -8,7 +8,7 @@
   html,body{height:100%;margin:0;background:#0f172a;color:#e2e8f0;font-family:system-ui,Segoe UI,Roboto,Ubuntu}
   .wrap{max-width:720px;margin:0 auto;padding:16px;display:flex;flex-direction:column;gap:12px}
   .top{display:flex;justify-content:space-between;align-items:center}
-  canvas{background:#0b1220;border:2px solid #334155;border-radius:12px;touch-action:none}
+  canvas{background:#0b1220;border:2px solid #334155;border-radius:12px;touch-action:none;image-rendering: pixelated;}
   .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
   button{padding:8px 12px;border-radius:10px;border:1px solid #334155;background:#111827;color:#e5e7eb;cursor:pointer}
   button:hover{background:#1f2937}
@@ -47,6 +47,47 @@
   const $start = document.getElementById('btn-start');
   const $slower = document.getElementById('btn-slower');
   const $faster = document.getElementById('btn-faster');
+
+  // --- NUEVO: sprites ---
+  const SPR = {};
+  const spriteFiles = {
+    body_bottomleft:  "body_bottomleft.png",
+    body_bottomright: "body_bottomright.png",
+    body_horizontal:  "body_horizontal.png",
+    body_topleft:     "body_topleft.png",
+    body_topright:    "body_topright.png",
+    body_vertical:    "body_vertical.png",
+    head_left:        "head_left.png",
+    head_down:        "head_down.png",
+    head_right:       "head_right.png",
+    head_up:          "head_up.png",
+    tail_down:        "tail_down.png",
+    tail_left:        "tail_left.png",
+    tail_right:       "tail_right.png",
+    tail_up:          "tail_up.png",
+    apple:            "apple.png",
+  };
+  function loadSprites() {
+    const ps = [];
+    for (const k in spriteFiles) {
+      const img = new Image();
+      img.src = `sprites/${spriteFiles[k]}`;
+      SPR[k] = img;
+      ps.push(new Promise(res => {
+        if (img.complete) return res();
+        img.onload = () => res();
+        img.onerror = () => res(); // fallback si falta
+      }));
+    }
+    return Promise.all(ps);
+  }
+  function drawSprite(img, x, y) {
+    if (img && img.complete) {
+      ctx.drawImage(img, x*CELL, y*CELL, CELL, CELL);
+      return true;
+    }
+    return false;
+  }
 
   let best = Number(localStorage.getItem('snake_best')||0);
   $best.textContent = best;
@@ -104,16 +145,99 @@
     draw();
   }
 
+  // --- NUEVO: helpers de direcciones para elegir sprites ---
+  function isOpposite(a,b){
+    return (a==='U'&&b==='D')||(a==='D'&&b==='U')||(a==='L'&&b==='R')||(a==='R'&&b==='L');
+  }
+  function setDir(d){ if(!isOpposite(d,state.dir)) pendingDir = d; }
+
+  // Traducción de posiciones a direcciones cardinales
+  function dirFromTo(a, b){
+    if (!a || !b) return null;
+    const dx = b.x - a.x, dy = b.y - a.y;
+    if (dx ===  1 && dy === 0) return 'R';
+    if (dx === -1 && dy === 0) return 'L';
+    if (dx ===  0 && dy === 1) return 'D';
+    if (dx ===  0 && dy ===-1) return 'U';
+    return null;
+  }
+
   function draw(){
     ctx.fillStyle = COLORS.bg; ctx.fillRect(0,0,C.width,C.height);
     // grid
     ctx.strokeStyle = COLORS.grid; ctx.lineWidth = 1;
     for(let i=1;i<W;i++){ ctx.beginPath(); ctx.moveTo(i*CELL,0); ctx.lineTo(i*CELL,C.height); ctx.stroke(); }
     for(let j=1;j<H;j++){ ctx.beginPath(); ctx.moveTo(0,j*CELL); ctx.lineTo(C.width,j*CELL); ctx.stroke(); }
-    // food
-    drawCell(state.food.x, state.food.y, COLORS.food);
-    // snake
-    state.snake.forEach((p,i)=>drawCell(p.x,p.y, i===0?COLORS.head:COLORS.snake));
+
+    // --- NUEVO: dibujar manzana como sprite (fallback a color) ---
+    if (!drawSprite(SPR.apple, state.food.x, state.food.y)) {
+      drawCell(state.food.x, state.food.y, COLORS.food);
+    }
+
+    // --- NUEVO: dibujar snake por piezas ---
+    for (let i=0; i<state.snake.length; i++){
+      const p = state.snake[i];
+
+      if (i===0){
+        // Cabeza: mirar hacia donde "salimos" desde la cabeza (dir actual)
+        // Para compatibilidad, la cabeza "mira" a state.dir
+        let key = 'head_right';
+        if (state.dir==='L') key = 'head_left';
+        if (state.dir==='R') key = 'head_right';
+        if (state.dir==='U') key = 'head_up';
+        if (state.dir==='D') key = 'head_down';
+
+        if (!drawSprite(SPR[key], p.x, p.y)) {
+          // fallback color
+          drawCell(p.x, p.y, COLORS.head);
+        }
+      } else if (i === state.snake.length-1){
+        // Cola: según la dirección desde el segmento anterior hacia la cola
+        const prev = state.snake[i-1];
+        const d = dirFromTo(prev, p); // prev -> cola
+        let key = 'tail_right';
+        if (d==='R') key = 'tail_right';
+        if (d==='L') key = 'tail_left';
+        if (d==='U') key = 'tail_up';
+        if (d==='D') key = 'tail_down';
+
+        if (!drawSprite(SPR[key], p.x, p.y)) {
+          drawCell(p.x, p.y, COLORS.snake);
+        }
+      } else {
+        // Cuerpo: rectas o curvas según conexiones prev/next
+        const prev = state.snake[i-1];
+        const next = state.snake[i+1];
+        const dp = dirFromTo(p, prev); // p -> prev
+        const dn = dirFromTo(p, next); // p -> next
+
+        let drawn = false;
+
+        // Rectas
+        if ((dp==='L' && dn==='R') || (dp==='R' && dn==='L')) {
+          drawn = drawSprite(SPR.body_horizontal, p.x, p.y);
+        } else if ((dp==='U' && dn==='D') || (dp==='D' && dn==='U')) {
+          drawn = drawSprite(SPR.body_vertical, p.x, p.y);
+        } else {
+          // Esquinas (combinaciones que comparten el centro)
+          const fromTop    = (dp==='U' || dn==='U');
+          const fromBottom = (dp==='D' || dn==='D');
+          const fromLeft   = (dp==='L' || dn==='L');
+          const fromRight  = (dp==='R' || dn==='R');
+
+          if (fromTop && fromRight)   drawn = drawSprite(SPR.body_topright, p.x, p.y);
+          else if (fromTop && fromLeft)    drawn = drawSprite(SPR.body_topleft, p.x, p.y);
+          else if (fromBottom && fromRight)drawn = drawSprite(SPR.body_bottomright, p.x, p.y);
+          else if (fromBottom && fromLeft) drawn = drawSprite(SPR.body_bottomleft, p.x, p.y);
+        }
+
+        if (!drawn) {
+          // fallback si faltó sprite
+          drawCell(p.x, p.y, COLORS.snake);
+        }
+      }
+    }
+
     if(state.dead){
       ctx.fillStyle = 'rgba(0,0,0,.5)'; ctx.fillRect(0,0,C.width,C.height);
       ctx.fillStyle = '#e2e8f0'; ctx.textAlign='center';
@@ -121,15 +245,12 @@
       ctx.fillText('💀 GAME OVER', C.width/2, C.height/2);
     }
   }
+
   function drawCell(x,y,color){
     const m = 2;
     ctx.fillStyle = color;
     ctx.fillRect(x*CELL+m, y*CELL+m, CELL-2*m, CELL-2*m);
   }
-  function isOpposite(a,b){
-    return (a==='U'&&b==='D')||(a==='D'&&b==='U')||(a==='L'&&b==='R')||(a==='R'&&b==='L');
-  }
-  function setDir(d){ if(!isOpposite(d,state.dir)) pendingDir = d; }
 
   // loop
   function startLoop(){ stopLoop(); timer = setInterval(step, speed); }
@@ -156,9 +277,10 @@
   $slower.onclick = ()=>{ speed = Math.min(300, speed+20); if(timer) startLoop(); };
   $faster.onclick = ()=>{ speed = Math.max(40, speed-20); if(timer) startLoop(); };
 
-  // init
-  newGame();
+  // init: cargar sprites y luego iniciar juego
+  loadSprites().then(() => { newGame(); });
 })();
 </script>
 </body>
 </html>
+
